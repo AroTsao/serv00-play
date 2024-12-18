@@ -153,14 +153,16 @@ createConfigFile(){
       ;;
     88)
        delCron
+       backupConfig "config.json"
        green "设置完毕!"
        return 0
        ;;
     99)
-       if [[ ! -e config.json ]]; then
+       if [[ ! -e config.bak ]]; then
           red "之前未有配置，未能复通!"
           return 1
        fi
+       restoreConfig "config.bak"
        tm=$(jq -r ".chktime" config.json)
        addCron $tm
        green "设置完毕!"
@@ -234,6 +236,26 @@ done
   chmod +x ${installpath}/serv00-play/keepalive.sh
   echo -e "${YELLOW} 设置完成! ${RESET} "
 
+}
+
+backupConfig(){
+  local filename=$1
+  if [[ -e "$filename" ]]; then
+    if [[ "$filename" =~ ".json" ]]; then
+      local basename=${filename%.json}
+      mv $filename $basename.bak
+    fi
+  fi
+}
+
+restoreConfig(){
+  local filename=$1
+  if [[ -e "$filename" ]]; then
+    if [[ "$filename" =~ ".bak" ]]; then
+      local basename=${filename%.bak}
+      mv $filename $basename.json
+    fi
+  fi
 }
 
 make_vmess_config() {
@@ -419,6 +441,9 @@ rm -rf tempvmess.json temphy2.json tmpsocks5.json
 
 
 configSingBox(){
+   if ! checkInstalled "serv00-play"; then
+      return 1
+  fi
   cd ${installpath}/serv00-play/singbox
 
   loadPort
@@ -616,9 +641,12 @@ EOF
 }
 
 startSingBox(){
-
   cd ${installpath}/serv00-play/singbox
-
+  
+  if [[ ! -e "singbox.json" ]]; then
+     red "请先进行配置!"
+     return 1
+  fi
   
   # if [[ ! -e ${installpath}/serv00-play/singbox/serv00sb ]] || [[ ! -e ${installpath}/serv00-play/singbox/cloudflared ]]; then
   #   read -p "请输入使用密码:" password
@@ -647,7 +675,6 @@ startSingBox(){
   yellow "启动成功!"
 
 }
-
 
 stopSingBox(){
   cd ${installpath}/serv00-play/singbox
@@ -845,6 +872,9 @@ InitServer(){
 }
 
 manageNeZhaAgent(){
+  if ! checkInstalled "serv00-play"; then
+     return 1
+  fi
   while true; do
   yellow "-------------------------"
   echo "探针管理："
@@ -885,6 +915,8 @@ manageNeZhaAgent(){
 }
 
 updateAgent(){
+  red "暂不提供在线升级, 只适配哪吒面板v0版本系列。"
+  return 1
   exepath="${installpath}/serv00-play/nezha/nezha-agent"
   if [ ! -e "$exepath" ]; then
     red "未安装探针，请先安装！！!"
@@ -975,7 +1007,7 @@ installNeZhaAgent(){
    cd ${workedir}
    if [[ ! -e nezha-agent ]]; then
     echo "正在下载哪吒探针..."
-    local url="https://github.com/nezhahq/agent/releases/latest/download/nezha-agent_freebsd_amd64.zip"
+    local url="https://github.com/nezhahq/agent/releases/download/v0.20.3/nezha-agent_freebsd_amd64.zip"
     agentZip="nezha-agent.zip"
     if ! wget -qO "$agentZip" "$url"; then
         red "下载哪吒探针失败"
@@ -1136,6 +1168,23 @@ showIP(){
   green "本机IP: $myip"
 }
 
+uninstallMtg(){
+  read -p "确定卸载? [y/n] [n]:" input
+  input=${input:-n}
+
+  if [[ "$input" == "n" ]]; then
+     return 1
+  fi
+
+  if [[ -e "mtg" ]]; then
+    if checkProcAlive mtg; then
+      stopMtg
+    fi
+    cd ${installpath}/serv00-play
+    rm -rf dmtg
+    green "卸载完毕！"
+  fi
+}
 
 installMtg(){
    if [ ! -e "mtg" ]; then 
@@ -1157,7 +1206,9 @@ installMtg(){
    fi
     
    #自动生成密钥
-   host=$(hostname)
+   head=$(hostname | cut -d '.' -f 1)
+   no=${head#s}
+   host="panel${no}.serv00.com"
    secret=$(./mtg generate-secret --hex $host )
    loadPort
    randomPort tcp mtg
@@ -1234,6 +1285,9 @@ stopMtg(){
 }
 
 mtprotoServ(){
+  if ! checkInstalled "serv00-play"; then
+     return 1
+  fi
    cd ${installpath}/serv00-play
 
    if [ ! -e "dmtg" ]; then
@@ -1243,10 +1297,12 @@ mtprotoServ(){
 
    while true; do
     yellow "---------------------"
+    echo "服务状态: $(checkProcStatus mtg)"
     echo "mtproto管理:"
-    echo "1. 安装mtproto代理"
-    echo "2. 启动mtproto代理"
-    echo "3. 停止mtproto代理"
+    echo "1. 安装"
+    echo "2. 启动"
+    echo "3. 停止"
+    echo "4. 卸载"
     echo "9. 返回主菜单"
     echo "0. 退出脚本"
     yellow "---------------------"
@@ -1258,6 +1314,8 @@ mtprotoServ(){
       2) startMtg
          ;;
       3) stopMtg
+         ;;
+      4) uninstallMtg
          ;;
       9)  break
          ;;
@@ -1297,6 +1355,7 @@ update_http_port() {
     echo "配置文件处理完毕."
 
 }
+
 
 installAlist(){
   if ! checkInstalled "serv00-play"; then
@@ -1380,6 +1439,13 @@ stopAlist(){
   fi
      
 }
+
+# uninstallPHP(){
+#   local domain=$1
+#   initialize_phpjson
+#   delete_domain $domain
+#   yellow "已删除域名 $domain 的相关服务!"
+# }
 
 uninstallProc(){
   local path=$1
@@ -2038,6 +2104,9 @@ installSunPanel(){
 makeWWW(){
   local proc=$1
   local port=$2
+  local www_type=${3:-"proxy"}
+  
+  echo "正在处理服务IP,请等待..."
   is_self_domain=0
   webIp=$(get_webip)
   default_webip=$(get_default_webip)
@@ -2060,8 +2129,14 @@ makeWWW(){
     red "输入无效域名!"
     return 1
   fi
-
-  resp=$(devil www add $domain proxy localhost $port)
+  
+  domain=${domain,,}
+  echo "正在绑定域名,请等待..."
+  if [[ "$www_type" == "proxy" ]]; then
+    resp=$(devil www add $domain proxy localhost $port)
+  else
+    resp=$(devil www add $domain php)
+  fi
   #echo "resp:$resp"
   if [[ ! "$resp" =~ .*succesfully.*$  && ! "$resp" =~ .*Ok.*$ ]]; then 
      if [[ ! "$resp" =~ "This domain already exists" ]]; then 
@@ -2082,6 +2157,7 @@ makeWWW(){
     webIp=$(get_default_webip)
   fi
   # 保存信息
+  if [[ "$www_type" == "proxy" ]]; then
   cat > config.json <<EOF
   {
      "webip": "$webIp",
@@ -2089,6 +2165,8 @@ makeWWW(){
      "port": "$port"
   }
 EOF
+  fi
+
   green "域名绑定成功,你的域名是:$domain"
   green "你的webip是:$webIp"
 }
@@ -2119,6 +2197,115 @@ startSunPanel(){
      green "启动成功"
   else 
      red "启动失败"
+  fi
+
+}
+
+
+burnAfterReadingServ(){
+   if ! checkInstalled "serv00-play"; then
+      return 1
+    fi
+    while true; do
+    yellow "---------------------"
+    echo "1. 安装"
+    echo "2. 卸载"
+    echo "9. 返回主菜单"
+    echo "0. 退出脚本"
+    yellow "---------------------"
+    read -p "请选择:" input
+
+    case $input in
+    1) installBurnReading
+       ;;
+    2) uninstallBurnReading
+       ;;
+    9) break
+      ;;
+    0) exit 0
+       ;;
+    *)  echo "无效选项，请重试"
+      ;;
+    esac 
+  done
+  showMenu
+}
+
+installBurnReading(){
+   local workdir="${installpath}/serv00-play/burnreading"
+
+   if [[ ! -e "$workdir" ]]; then
+      mkdir -p $workdir
+   fi
+  cd $workdir 
+
+  if  ! check_domains_empty; then
+    red "已有安装如下服务，是否继续安装?"
+    print_domains
+    read -p "继续安装? [y/n] [n]:" input
+    input=${input:-n}
+    if [[ "$input" == "n" ]]; then
+       return 0
+    fi
+  fi
+  
+  domain=""
+  webIp=""
+  if ! makeWWW burnreading "null" php ; then
+    echo "绑定域名失败!"
+    return 1
+  fi
+  
+  domainPath="$installpath/domains/$domain/public_html"
+  cd $domainPath
+  echo "正在下载并安装 OneTimeMessagePHP ..."
+  if ! download_from_github_release frankiejun OneTimeMessagePHP OneTimeMessagePHP; then
+      red "下载失败!"
+      return 1
+  fi
+  passwd=$(uuidgen -r )
+  sed -i '' -e "s/^ENCRYPTION_KEY=.*/ENCRYPTION_KEY=\"$passwd\"/" \
+              -e "s|^SITE_DOMAIN=.*|SITE_DOMAIN=\"$domain\"|" "env"
+  mv env .env
+  echo "已更新配置文件!"
+
+  read -p "是否申请证书? [y/n] [n]:" input
+  input=${input:-'n'}
+  if [[ "$input" == "y" ]]; then
+    echo "正在申请证书，请等待..."
+    if ! applyLE $domain $webIp; then
+      echo "申请证书失败!"
+      return 1
+    fi
+  fi
+  cd $workdir 
+  add_domain $domain $webIp
+
+  echo "安装完成!"
+}
+
+uninstallBurnReading(){
+  local workdir="${installpath}/serv00-play/burnreading"
+
+  if [[ ! -e "$workdir" ]]; then
+     echo "已没有可以卸载的服务!"
+     return 1
+  fi 
+
+  cd $workdir
+
+  if ! check_domains_empty; then
+     echo "目前已安装服务的域名有:"
+     print_domains
+  fi
+  read -p "是否删除所有域名服务? [y/n] [n]:" input
+  input=${input:-n}
+  if [[ "$input" == "y" ]]; then
+    delete_all_domains
+    rm -rf "${installpath}/serv00-play/burnreading"
+  else
+    read -p "请输入要删除的服务的域名:" domain
+    delete_domain "$domain"
   fi
 
 }
@@ -2264,8 +2451,10 @@ startWebSSH(){
   if checkProcAlive "wssh"; then
     stopProc "wssh"
   fi
+  echo "正在启动中..."
   cmd="nohup ./wssh --port=$port --fbidhttp=False --xheaders=False --encoding='utf-8' --delay=10  $args &"
   eval "$cmd"
+  sleep 2
   if checkProcAlive wssh; then
     green "启动成功！"
   else
@@ -2291,8 +2480,48 @@ checkInstalled(){
      else 
         return 0
      fi
+  else
+     if [[ ! -d "${installpath}/serv00-play/$model" ]]; then 
+        red "请先安装$model !!!"
+        return 1
+     else 
+        return 0
+     fi
   fi
   return 1
+}
+
+changeHy2IP(){
+   read -p "是否让程序为HY2选择可用的IP？[y/n] [y]:" input
+   input=${input:-y}
+
+   if [[ "$input" == "y" ]]; then
+     cd ${installpath}/serv00-play/singbox
+     if [[ ! -e "singbox.json"  || ! -e "config.json" ]]; then
+        red "未安装节点，请先安装!"
+        return 1
+     fi
+     hy2_ip=$(get_ip)
+     if [[ -z "hy2_ip" ]]; then
+        red "很遗憾，已无可用IP!"
+        return 1
+     fi
+     if ! upInsertFd singbox.json HY2IP "$hy2_ip"; then
+        red "更新singbox.json配置文件失败!"
+        return 1
+     fi
+
+     if ! upSingboxFd config.json "inbounds" "tag" "hysteria-in" "listen" "$hy2_ip"; then 
+        red "更新config.json配置文件失败!"
+        return 1
+     fi
+     green "HY2 更换IP成功，当前IP为 $hy2_ip"
+
+     echo "正在重启sing-box..."
+     stopSingBox
+     startSingBox
+   fi
+
 }
 
 showMenu(){
@@ -2304,9 +2533,9 @@ showMenu(){
   echo "<------------------------------------------------------------------>"
   echo "请选择一个选项:"
 
-  options=("安装/更新serv00-play项目" "sun-panel"  "webssh"  "待开发"  "待开发"  "设置保活的项目" "配置sing-box" \
-          "运行sing-box" "停止sing-box" "显示sing-box节点信息" "快照恢复" "系统初始化" "设置中国时区及前置工作" "管理哪吒探针" "卸载探针" "设置彩色开机字样" "显示本机IP" \
-          "mtproto代理" "alist管理" "端口管理" "域名证书管理" "一键root" "自动检测主机IP状态" "卸载" )
+  options=("安装/更新serv00-play项目" "sun-panel"  "webssh"  "阅后即焚"  "待开发"  "设置保活的项目" "配置sing-box" \
+          "运行sing-box" "停止sing-box" "显示sing-box节点信息" "快照恢复" "系统初始化" "前置工作及设置中国时区" "管理哪吒探针" "卸载探针" "设置彩色开机字样" "显示本机IP" \
+          "mtproto代理" "alist管理" "端口管理" "域名证书管理" "一键root" "自动检测主机IP状态" "一键更换hy2的IP" "卸载" )
 
   select opt in "${options[@]}"
   do
@@ -2321,7 +2550,7 @@ showMenu(){
               websshServ
               ;;
           4)
-              nonServ
+              burnAfterReadingServ
               ;;
           5)
               nonServ
@@ -2381,6 +2610,9 @@ showMenu(){
            getUnblockIP
            ;;
         24)
+           changeHy2IP
+           ;;
+        25)
             uninstall
             ;;
         0)
